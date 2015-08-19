@@ -1,0 +1,233 @@
+---
+title: "Exercise02"
+author: "Bob Cook"
+date: "August 17, 2015"
+output: word_document
+---
+
+## Flights at ABIA
+
+```{r, echo=FALSE}
+library(ggplot2)
+abia = read.csv('C:/Users/Bob/Downloads/ABIA.csv')
+```
+
+```{r}
+carrier = c('Pinnacle', 'American', 'Mesa', 'Northwest', 'Continental', 'ExpessJet', 'JetBlue', 'Southwest', 'United', 'SkyWest', 'Comair', 'ASA', 'Piedmont', 'Envoy', 'Frontier', 'Delta')
+
+code = c('9E', 'AA', 'YV', 'NW', 'CO', 'XE', 'B6', 'WN', 'UA', 'OO', 'OH', 'EV', 'US', 'MQ', 'F9', 'DL')
+
+df = data.frame(carrier, code)
+
+m1 = merge(abia, df, by.x = "UniqueCarrier", by.y = "code")
+m1$TotalTaxiTime = m1$TaxiIn + m1$TaxiOut
+
+m2 = subset(m1, m1$carrier == 'American' | m1$carrier == 'Southwest' | m1$carrier == 'American' | m1$carrier == 'United' | m1$carrier == 'Delta' )
+
+
+m2 = m1[m1$carrier == 'American' | m1$carrier == 'Southwest' | m1$carrier == 'American' | m1$carrier == 'United' | m1$carrier == 'Delta', ]
+
+plot(m2$TaxiOut+m2$TaxiIn~m2$carrier, par(las=2), xlab='', ylab='Total Taxi Time')
+
+m2$TotalTaxiTime = m2$TaxiIn + m2$TaxiOut
+
+attach(m2)
+
+
+ggplot(m2, aes(carrier, TotalTaxiTime)) + geom_boxplot(aes(fill = factor(Month))) + xlab('') + ylab('Total Taxi Time') + ggtitle('Taxi Time by Month for Major Airlines')
+
+```
+
+
+
+## Author Attribution
+-Naive Bayes, Random Forest / PCA
+
+First, we need to create two corpora, one for the training set and one for the test set.
+After the following pre-processing and (importantly) label creation, I have two Document-term matrices to run the classifications with.
+
+```{r, echo=FALSE}
+setwd('C:/Users/Bob/Downloads')
+library(tm)
+library(e1071)
+library(plyr)
+library(ggplot2)
+library(gbm)
+library(caret)
+library(randomForest)
+
+# Remember to source in the "reader" wrapper function
+readerPlain = function(fname){
+  readPlain(elem=list(content=readLines(fname)), 
+            id=fname, language='en') }
+
+author_dirs = Sys.glob('C50train/*')
+file_list = NULL
+labels_X = NULL
+for(author in author_dirs) {
+  author_name = substring(author, first=10)
+  files_to_add = Sys.glob(paste0(author, '/*.txt'))
+  file_list = append(file_list, files_to_add)
+  labels_X = append(labels_X, rep(author_name, length(files_to_add)))
+}
+
+
+# Need a more clever regex to get better names here
+all_docs = lapply(file_list, readerPlain) 
+names(all_docs) = file_list
+names(all_docs) = sub('.txt', '', names(all_docs))
+
+my_corpus = Corpus(VectorSource(all_docs))
+names(my_corpus) = file_list
+
+# Preprocessing
+my_corpus = tm_map(my_corpus, content_transformer(tolower)) # make everything lowercase
+my_corpus = tm_map(my_corpus, content_transformer(removeNumbers)) # remove numbers
+my_corpus = tm_map(my_corpus, content_transformer(removePunctuation)) # remove punctuation
+my_corpus = tm_map(my_corpus, content_transformer(stripWhitespace)) ## remove excess white-space
+my_corpus = tm_map(my_corpus, content_transformer(removeWords), stopwords("SMART"))
+
+DTMx = DocumentTermMatrix(my_corpus)
+DTMx = removeSparseTerms(DTMx, 0.975)
+
+X = as.matrix(DTMx)
+
+X_dict = NULL
+X_dict = dimnames(X)[[2]]
+
+#Now I have the document-term matrix for training corpus
+
+
+
+author_dirs = Sys.glob('C50test/*')
+file_list = NULL
+labels_Y = NULL
+for(author in author_dirs) {
+  author_name = substring(author, first=9)
+  files_to_add = Sys.glob(paste0(author, '/*.txt'))
+  file_list = append(file_list, files_to_add)
+  labels_Y = append(labels_Y, rep(author_name, length(files_to_add)))
+}
+
+# Need a more clever regex to get better names here
+all_docs = lapply(file_list, readerPlain) 
+names(all_docs) = file_list
+names(all_docs) = sub('.txt', '', names(all_docs))
+
+my_corpus = Corpus(VectorSource(all_docs))
+names(my_corpus) = file_list
+
+# Preprocessing
+my_corpus = tm_map(my_corpus, content_transformer(tolower)) # make everything lowercase
+my_corpus = tm_map(my_corpus, content_transformer(removeNumbers)) # remove numbers
+my_corpus = tm_map(my_corpus, content_transformer(removePunctuation)) # remove punctuation
+my_corpus = tm_map(my_corpus, content_transformer(stripWhitespace)) ## remove excess white-space
+my_corpus = tm_map(my_corpus, content_transformer(removeWords), stopwords("SMART"))
+
+
+DTMy = DocumentTermMatrix(my_corpus, list(dictionary=X_dict))
+DTMy = removeSparseTerms(DTMy, 0.975)
+
+Y = as.matrix(DTMy)
+
+#Now I have a document-term matrix for my test corpus
+
+```
+
+Next, before I can run classification, I have to convert these DTM's into data frames that can be recognized by the functions:
+
+```{r}
+Xdf = as.data.frame(X)
+Ydf = as.data.frame(Y)
+
+```
+
+Now, I run Naive Bayes, and produce a plot to show how the model did:
+
+```{r}
+
+NB_1 = naiveBayes(x=Xdf, y=as.factor(labels_X), laplace=1)
+
+predicted = predict(NB_1, Ydf)
+
+tabled_NB = as.data.frame(table(predicted, labels_Y))
+
+plotted_NB = ggplot(tabled_NB) + geom_tile(aes(x=labels_Y, y=predicted, fill=Freq)) + ggtitle('How did NB do?') + xlab('actual')
+plotted_NB
+```
+
+Naive Bayes did not perform too well. Now, let's check performance by author by sorting the sensitivity values in the confusion matrix:
+
+```{r}
+
+NB_1_conf_matrix = confusionMatrix(table(predicted,labels_Y))
+
+as.data.frame(NB_1_conf_matrix$byClass)[order(-as.data.frame(NB_1_conf_matrix$byClass)$Sensitivity),1:2]
+
+```
+
+
+So, for a few authors Naive Bayes performed okay, but overall it struggled to provide accuracy.
+
+
+Random Forests:
+We'll run the random forests model and use the same method to check its prediction accuracy:
+
+```{r}
+Y = as.matrix(Y)
+X = as.matrix(X)
+
+lhs <- data.frame(Y[,intersect(colnames(Y), colnames(X))])
+rhs <- read.table(textConnection(""), col.names = colnames(X), colClasses = "integer")
+library(plyr)
+cleaner_Y = rbind.fill(lhs, rhs)
+
+cleaner_Ydf = as.data.frame(cleaner_Y)
+
+
+RF_1 = randomForest(x=Xdf, y=as.factor(labels_X), mtry=4, ntree=150)
+
+RF_1_predicted = predict(RF_1, data=cleaner_Y)
+
+
+RF_1_conf_matrix = confusionMatrix(table(RF_1_predicted,labels_Y))
+
+as.data.frame(RF_1_conf_matrix$byClass)[order(-as.data.frame(RF_1_conf_matrix$byClass)$Sensitivity),1:2]
+```
+
+Clearly, random forests performed much better than Naive Bayes, as expected.
+
+Why the difference?
+In addition to advantages within the random forests algorithm, like the bootstrapping of the variables in addition to the documents, it seems to me that Naive Bayes' strong independence assumption between variables would be problematic in a NLP application. Certain words in a given document would likely be strongly correlated, which the Naive Bayes assumption skips over.
+
+
+
+
+
+
+
+
+## Practice with association rule mining
+
+```{r}
+library(arules)
+groceries <- read.csv('C:/Users/Bob/Downloads/groceries.csv', header=FALSE)
+groceries <- subset(groceries, V4 !='')
+groceries_trans <- as(groceries, "transactions")
+groceries_rules <- apriori(groceries_trans, 
+                      parameter=list(support=.001, confidence=.5, maxlen=4))
+
+summary(groceries_rules)
+```
+
+```{r}
+# Look at the output
+inspect(subset(groceries_rules, subset = support<.0015 & confidence > .8 & lift>50))
+
+```
+
+I chose a small support level because I was interested to see what the associations within item sets that were not as popular. I chose a confidence and lift value that were high enough to get the number of items down to a workable amount. These item sets make sense because of how similar the items are to others in its own set.
+
+These associations indicate that it may be beneficial to have these items grouped together in a store. It is interesting that, in my experience, you may find the items in the lhs column, but the corresponding item(s) in the rhs column may not be in the same store.
+
+Stores with this situation may be missing out on significant sales given how how great the assocations are between these items. For example, even though it may be expensive for a given store that sells beer and wine to get a permit to also sell liquor, it may be worth it because of how great the association is. Similarly, I have seen stores that sell chicken and beef but not necessarily pork. Given that, in this data set, every transaction that included chicken and beef also included pork, it would make a lot of sense to add pork to the customers' options. 
